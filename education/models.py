@@ -13,6 +13,7 @@ class Student(models.Model):
     parent_name = models.CharField(max_length=150, blank=True)
     parent_phone = models.CharField(max_length=30, blank=True)
     notes = models.TextField(blank=True)
+    meta = models.JSONField(default=dict, blank=True)  # frontend: course, group, days, time
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return f"{self.first_name} {self.last_name}"
 

@@ -1956,19 +1956,63 @@
     // ========================================================================
     // DATA
     // ========================================================================
+    // ========================================================================
+    // BACKEND API (Django REST) — bir domenda bo'lgani uchun API_BASE bo'sh.
+    // Frontend boshqa hostingda bo'lsa: const API_BASE = 'https://umarbek-backend-production.up.railway.app';
+    // ========================================================================
+    const API_BASE = '';
+    const getCookie = n => (document.cookie.split('; ').find(c => c.startsWith(n + '=')) || '').split('=')[1] || '';
+
+    async function api(path, method = 'GET', body) {
+      const r = await fetch(API_BASE + path, {
+        method,
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: body !== undefined ? JSON.stringify(body) : undefined
+      });
+      if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+      return r.status === 204 ? null : r.json();
+    }
+
+    const ST_UI = { active: 'Faol', inactive: "To'xtatilgan", graduated: 'Tugatgan' };
+    const ST_API = { 'Faol': 'active', "To'xtatilgan": 'inactive', 'Tugatgan': 'graduated' };
+
+    function studentFromApi(s) {
+      const m = s.meta || {};
+      return {
+        id: s.id,
+        name: (s.first_name + ' ' + s.last_name).trim().replace(/ -$/, ''),
+        phone: s.phone || '',
+        course: m.course || '', group: m.group || '',
+        status: ST_UI[s.status] || 'Faol',
+        days: m.days || [], time: m.time || '15:00'
+      };
+    }
+    function studentToApi(s) {
+      const parts = s.name.trim().split(/\s+/);
+      return {
+        first_name: parts[0],
+        last_name: parts.slice(1).join(' ') || '-',   // backendda last_name majburiy
+        phone: s.phone,
+        status: ST_API[s.status] || 'active',
+        meta: { course: s.course, group: s.group, days: s.days, time: s.time }
+      };
+    }
+    async function loadStudents() {
+      try {
+        students = (await api('/api/education/student/')).map(studentFromApi);
+      } catch (err) {
+        console.error(err);
+        showToast("Serverdan o'quvchilarni olib bo'lmadi: " + err.message, 'error');
+      }
+    }
+
     const AVATAR_PALETTE = ['#5b7cfa', '#2dd4bf', '#8b5cf6', '#38bdf8', '#6366f1', '#4f46e5', '#0891b2', '#60a5fa', '#ec4899', '#f59e0b', '#10b981', '#ef4444'];
 
     function colorFor(str) { let h = 0; for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h); return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length]; }
     function initials(n) { return (n || '?').trim().charAt(0).toUpperCase(); }
 
-    let students = [
-      { id: 1, name: 'Ali Karimov', phone: '+998 90 123 4567', course: 'JavaScript', group: 'JavaScript', status: 'Faol', days: ['Dushanba', 'Chorshanba', 'Juma'], time: '15:00' },
-      { id: 2, name: 'Gulnora Toshmatova', phone: '+998 93 234 5678', course: 'Python', group: 'Python', status: "To'xtatilgan", days: ['Seshanba', 'Payshanba'], time: '17:00' },
-      { id: 3, name: 'Jasur Rahimov', phone: '+998 94 345 6789', course: 'React', group: 'React', status: 'Faol', days: ['Dushanba', 'Chorshanba'], time: '19:00' },
-      { id: 4, name: 'Dilshod Abdurahimov', phone: '+998 91 456 7890', course: 'JavaScript', group: 'JavaScript', status: 'Faol', days: ['Seshanba', 'Payshanba', 'Shanba'], time: '15:00' },
-      { id: 5, name: 'Shahnoza Rahimova', phone: '+998 92 567 8901', course: 'Python', group: 'Python', status: 'Tugatgan', days: ['Dushanba', 'Juma'], time: '17:00' },
-      { id: 6, name: 'Farrukh Akbarov', phone: '+998 97 678 9012', course: 'UI/UX', group: 'UI/UX', status: 'Faol', days: ['Dushanba', 'Chorshanba', 'Juma'], time: '14:00' }
-    ];
+    let students = [];   // serverdan yuklanadi (loadStudents)
 
     let teachers = [
       { id: 1, name: 'Anvar Toshmatov', specialty: 'JavaScript', phone: '+998 90 111 2233', salary: '3,000,000', status: 'Faol' },
@@ -2451,7 +2495,7 @@
       renderGroups();
     }
 
-    function saveStudent(e) {
+    async function saveStudent(e) {
       e.preventDefault();
       const editId = document.getElementById('editStudentId').value;
       const name = document.getElementById('studentName').value.trim();
@@ -2465,22 +2509,30 @@
       if (everyDay && everyDay.checked) { days = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba']; }
       else { days = Array.from(document.querySelectorAll('#studentDays input[type="checkbox"]:checked')).map(cb => cb.value); }
       if (!name || !phone) { showToast(t('full_name') + ' va ' + t('phone') + 'ni kiriting!', 'error'); return; }
-      if (editId) {
-        const student = students.find(s => s.id === parseInt(editId));
-        if (student) {
-          const oldName = student.name, oldGroup = student.group;
-          Object.assign(student, { name, phone, course, group, status, days, time });
-          attendance.forEach(a => { if (a.student === oldName) a.student = name; });
-          if (oldGroup !== group) updateGroupStudentCounts();
+      const payload = studentToApi({ name, phone, course, group, status, days, time });
+      try {
+        if (editId) {
+          const student = students.find(s => s.id === parseInt(editId));
+          const saved = studentFromApi(await api('/api/education/student/' + editId + '/', 'PUT', payload));
+          if (student) {
+            const oldName = student.name, oldGroup = student.group;
+            Object.assign(student, saved);
+            attendance.forEach(a => { if (a.student === oldName) a.student = name; });
+            if (oldGroup !== group) updateGroupStudentCounts();
+          }
           showToast('✅ ' + t('student') + ' ' + t('save'));
+        } else {
+          const newStudent = studentFromApi(await api('/api/education/student/', 'POST', payload));
+          students.push(newStudent);
+          attendance.push({ id: attNextId++, student: name, group, date: getToday(), status: 'Belgilanmagan', time: '' });
+          updateGroupStudentCounts();
+          addNotification('new_student', '🆕 Yangi o\'quvchi qo\'shildi: ' + name, { student: newStudent });
+          showToast('✅ ' + t('student') + ' ' + t('add'));
         }
-      } else {
-        const newStudent = { id: nextId++, name, phone, course, group, status, days, time };
-        students.push(newStudent);
-        attendance.push({ id: attNextId++, student: name, group, date: getToday(), status: 'Belgilanmagan', time: '' });
-        updateGroupStudentCounts();
-        addNotification('new_student', '🆕 Yangi o\'quvchi qo\'shildi: ' + name, { student: newStudent });
-        showToast('✅ ' + t('student') + ' ' + t('add'));
+      } catch (err) {
+        console.error(err);
+        showToast("Serverga saqlab bo'lmadi: " + err.message, 'error');
+        return;
       }
       renderStudents();
       renderDashboard();
@@ -2508,8 +2560,15 @@
       openModal('studentModal');
     }
 
-    function deleteStudent(id) {
+    async function deleteStudent(id) {
       if (!confirm(t('student') + ' o\'chirmoqchimisiz?')) return;
+      try {
+        await api('/api/education/student/' + id + '/', 'DELETE');
+      } catch (err) {
+        console.error(err);
+        showToast("Serverdan o'chirib bo'lmadi: " + err.message, 'error');
+        return;
+      }
       const s = students.find(x => x.id === id);
       students = students.filter(x => x.id !== id);
       attendance = attendance.filter(a => a.student !== s?.name);
@@ -2520,9 +2579,17 @@
       showToast('🗑️ ' + t('student') + ' o\'chirildi', 'warning');
     }
 
-    function updateStudentStatus(id, status) {
+    async function updateStudentStatus(id, status) {
       const s = students.find(x => x.id === id);
-      if (s) { s.status = status; renderStudents(); updateGroupStudentCounts(); showToast(t('status') + ': ' + status); }
+      if (!s) return;
+      try {
+        await api('/api/education/student/' + id + '/', 'PATCH', { status: ST_API[status] || 'active' });
+      } catch (err) {
+        console.error(err);
+        showToast("Serverga saqlab bo'lmadi: " + err.message, 'error');
+        return;
+      }
+      s.status = status; renderStudents(); updateGroupStudentCounts(); showToast(t('status') + ': ' + status);
     }
 
     // ========================================================================
@@ -3309,7 +3376,7 @@
     // ========================================================================
     // INIT
     // ========================================================================
-    function init() {
+    async function init() {
       const savedName = localStorage.getItem('instudy_center_name');
       const savedYear = localStorage.getItem('instudy_academic_year');
       if (savedName) document.getElementById('centerName').value = savedName;
@@ -3317,6 +3384,7 @@
       setTheme(currentTheme);
       applyTranslations();
       document.getElementById('topbarDate').textContent = new Date().toLocaleDateString('uz-UZ', { year: 'numeric', month: 'long', day: 'numeric' });
+      await loadStudents();
       const today = getToday();
       students.forEach(s => {
         if (!attendance.find(a => a.student === s.name && a.date === today)) {
