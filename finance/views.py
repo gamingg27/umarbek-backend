@@ -1,5 +1,6 @@
-from rest_framework import serializers, viewsets
+﻿from rest_framework import serializers, viewsets
 from .models import Payment, Salary
+from .serializers import *
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset=Payment.objects.all()
     serializer_class=PaymentSerializer
